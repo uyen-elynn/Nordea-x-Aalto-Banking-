@@ -6,6 +6,9 @@ import { HomePage } from './components/HomePage.js';
 import { KnowsPage, PrivacyPage, AutopilotPage, RewardsPage, RedeemSheet, ContactPage, MorePage, DeleteDocSheet, ConfirmSheet } from './components/Pages.js';
 import { Chat } from './components/Chat.js';
 import { Icon } from './ui/icons.js';
+import { FlowHomeCard, FlowSuggestions, FlowPage, MeetingCard, MeetingPrepPage, MeetingOverlay, EditSuggestionSheet } from './components/FlowParts.js';
+import { AdviserDesk } from './components/AdviserDesk.js';
+import { FlowState, Suggestion, fetchFlow, shareEntry, decideSuggestion, answerRequest } from './services/flowApi.js';
 import { CabinetEntry, ChatMessage, PersonaId, User } from './types.js';
 import {
   AppState,
@@ -33,7 +36,7 @@ import {
   deleteChat,
 } from './services/api.js';
 
-type Page = 'home' | 'knows' | 'rewards' | 'contact' | 'more' | 'privacy' | 'autopilot';
+type Page = 'home' | 'knows' | 'rewards' | 'contact' | 'more' | 'privacy' | 'autopilot' | 'flow' | 'prep';
 
 function initialDark() {
   try {
@@ -66,6 +69,14 @@ export default function App() {
   const [askDeleteChats, setAskDeleteChats] = useState(false);
   const [askDeleteChat, setAskDeleteChat] = useState<string | null>(null);
   const screenRef = useRef<HTMLDivElement>(null);
+
+  // Information flow: what reaches Nordea's agent and the adviser, and updates coming back.
+  const [flow, setFlow] = useState<FlowState | null>(null);
+  const [flowTick, setFlowTick] = useState(0);
+  const [showDesk, setShowDesk] = useState(true);
+  const [meetingOpen, setMeetingOpen] = useState(false);
+  const [editSug, setEditSug] = useState<Suggestion | null>(null);
+  const lastMeeting = useRef<string | null>(null);
 
   // Chat
   const [chatOpen, setChatOpen] = useState(false);
@@ -120,6 +131,21 @@ export default function App() {
     fetchUsers().then(setUsers).catch(() => {});
     fetchRewards().then(setRewards).catch(() => {});
   }, [personaId]);
+
+  // The flow changes from both sides (the adviser screen and the phone), so it is read again every few seconds.
+  const loadFlow = useCallback(() => fetchFlow(personaId).then(setFlow).catch(() => {}), [personaId]);
+  useEffect(() => {
+    loadFlow();
+    const t = window.setInterval(() => { loadFlow(); setFlowTick((n) => n + 1); }, 3000);
+    return () => window.clearInterval(t);
+  }, [loadFlow]);
+  useEffect(() => {
+    const st = flow?.meeting.status || null;
+    if (st === 'live' && lastMeeting.current !== 'live') setMeetingOpen(true);
+    if (st !== 'live') setMeetingOpen(false);
+    if (st === 'live' && flow?.meeting.request?.status === 'asked') setMeetingOpen(true);
+    lastMeeting.current = st;
+  }, [flow?.meeting.status, flow?.meeting.request?.status]);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
@@ -301,6 +327,29 @@ export default function App() {
     await refresh();
   };
 
+  // ---------- information flow ----------
+  // The cabinet's own agents may finish a write a moment later, so the app reads again shortly after.
+  const afterFlow = async (f: FlowState) => { setFlow(f); setFlowTick((n) => n + 1); await refresh(); window.setTimeout(() => refresh(), 1500); };
+  const share = async (e: CabinetEntry, shared: boolean) => {
+    try {
+      await afterFlow(await shareEntry(state!.user.id, e.id, shared));
+      setToast({ message: shared ? `Shared with Nordea. ${flow?.adviser.name || 'Your adviser'} can use it.` : 'Only yours now. Nordea can’t see it.' });
+    } catch (err: any) { setToast({ message: err?.message || 'That didn’t work' }); }
+  };
+  const decide = async (s: Suggestion, d: 'accept' | 'delete', edits?: { title: string; detail: string }) => {
+    try {
+      await afterFlow(await decideSuggestion(state!.user.id, s.id, d, edits));
+      const who = s.by === 'nordea_agent' ? 'Nordea' : flow?.adviser.name || 'Your adviser';
+      setToast({ message: d === 'delete' ? `Deleted. It was never added, and ${who} sees that.` : `Added to your cabinet. ${who} sees that you ${edits ? 'edited and ' : ''}accepted it.` });
+    } catch (err: any) { setToast({ message: err?.message || 'That didn’t work' }); }
+  };
+  const answer = async (a: 'once' | 'always' | 'no', entryId?: string) => {
+    try { await afterFlow(await answerRequest(state!.user.id, a, entryId)); }
+    catch (err: any) { setToast({ message: err?.message || 'That didn’t work' }); }
+  };
+  const flowTop = <FlowSuggestions flow={flow} onDecide={decide} onEdit={setEditSug} />;
+  const waitingCount = (flow?.suggestions || []).filter((s) => s.status === 'waiting').length;
+
   if (error && !state) {
     return <div className="caption" style={{ padding: 40 }}>Couldn’t load the app: {error}</div>;
   }
@@ -337,12 +386,17 @@ export default function App() {
 
   return (
     <div className={isCalm ? 'calm' : ''}>
-      <div className="stage-top">
+      <div className={`stage-top${showDesk ? ' wide' : ''}`}>
         <span className="stage-t"><b>Abel</b> · Nordea concept{!state.aiConnected && ' · AI not connected'}</span>
+        <span className="stage-chips">
         <button className="theme-chip" onClick={toggleTheme} aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}>
           <Icon name={isDark ? 'sun' : 'moon'} size={16} />
           {isDark ? 'Light' : 'Dark'}
         </button>
+        <button className="theme-chip desk-toggle" aria-pressed={showDesk} onClick={() => setShowDesk(!showDesk)}>
+          <Icon name="person" size={16} />{showDesk ? 'Hide adviser screen' : 'Show adviser screen'}
+        </button>
+        </span>
       </div>
       <div className="stagewrap">
         <PhoneFrame
@@ -382,7 +436,15 @@ export default function App() {
                 userId={state.user.id}
                 documents={state.documents}
                 onDeleteDoc={setDelDocId}
+                sharedIds={flow?.sharedIds}
+                onShare={(id, shared) => { const e = state.entries.find((x) => x.id === id); if (e) share(e, shared); }}
               />
+              {flow && meetingOpen && flow.meeting.status === 'live' && (
+                <MeetingOverlay state={state} flow={flow} onAnswer={answer} onClose={() => setMeetingOpen(false)} />
+              )}
+              {editSug && (
+                <EditSuggestionSheet s={editSug} onCancel={() => setEditSug(null)} onSave={(t, d) => { const s = editSug; setEditSug(null); decide(s, 'accept', { title: t, detail: d }); }} />
+              )}
               {delDocId && state.documents.find((d) => d.id === delDocId) && (
                 <DeleteDocSheet doc={state.documents.find((d) => d.id === delDocId)!} onDelete={removeDoc} onCancel={() => setDelDocId(null)} />
               )}
@@ -460,6 +522,11 @@ export default function App() {
               onWrong={(e) => update(e, { status: 'disputed' })}
               onArchive={archive}
               onKeep={(e) => update(e, { status: 'active', confirmedAt: new Date().toISOString() })}
+              extraCount={waitingCount}
+              extra={<>
+                <FlowHomeCard state={state} flow={flow} onOpenFlow={() => goPage('flow')} onOpenMeeting={() => (flow?.meeting.status === 'live' ? setMeetingOpen(true) : goPage('contact'))} />
+                <FlowSuggestions flow={flow} onDecide={decide} onEdit={setEditSug} limit={1} onMore={() => goPage('knows')} />
+              </>}
             />
           )}
           {page === 'knows' && (
@@ -475,8 +542,14 @@ export default function App() {
               onConfirm={confirm}
               onKeep={(e) => update(e, { status: 'active', confirmedAt: new Date().toISOString() })}
               onDeleteDoc={setDelDocId}
+              flow={flow}
+              flowTop={flowTop}
+              onFlow={() => goPage('flow')}
+              onShare={share}
             />
           )}
+          {page === 'flow' && <FlowPage state={state} flow={flow} onBack={() => goPage('home')} />}
+          {page === 'prep' && <MeetingPrepPage state={state} flow={flow} onBack={() => goPage('contact')} onShare={share} />}
           {page === 'privacy' && (
             <PrivacyPage
               state={state}
@@ -491,7 +564,8 @@ export default function App() {
             <AutopilotPage state={state} onBack={() => goPage('home')} onPlan={(t) => startChat('autopilot', t)} />
           )}
           {page === 'rewards' && <RewardsPage state={state} rewards={rewards} onAsk={() => openHelper('abel')} onUse={setRedeemAsk} onEarn={() => goPage('home')} />}
-          {page === 'contact' && <ContactPage state={state} onHelper={openHelper} onOpenConversation={openConversation} onDeleteChat={setAskDeleteChat} onDeleteAllChats={() => setAskDeleteChats(true)} />}
+          {page === 'contact' && <ContactPage state={state} onHelper={openHelper} onOpenConversation={openConversation} onDeleteChat={setAskDeleteChat} onDeleteAllChats={() => setAskDeleteChats(true)}
+            extra={<MeetingCard flow={flow} onPrep={() => goPage('prep')} onJoin={() => (flow?.meeting.status === 'live' ? setMeetingOpen(true) : setToast({ message: `${flow?.adviser.name || 'Your adviser'} starts the meeting. You'll see it here.` }))} />} />}
           {page === 'more' && (
             <MorePage
               state={state}
@@ -505,6 +579,7 @@ export default function App() {
             />
           )}
         </PhoneFrame>
+        {showDesk && <AdviserDesk userId={state.user.id} tick={flowTick} onChanged={() => { loadFlow(); refresh(); }} />}
       </div>
       <p className="foot">Student concept · fictional data and partners</p>
     </div>

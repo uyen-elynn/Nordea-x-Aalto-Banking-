@@ -20,6 +20,9 @@ interface Props {
   onWrong: (e: CabinetEntry) => void;
   onArchive: (e: CabinetEntry) => void;
   onKeep: (e: CabinetEntry) => void;
+  /** Information flow: where your information goes, updates from the Nordea side, your next meeting. */
+  extra?: React.ReactNode;
+  extraCount?: number;
 }
 
 /** Things Nordea noticed that wait for the customer, and old goals that look out of date. */
@@ -106,7 +109,7 @@ export const HomePage: React.FC<Props> = (p) => {
 
   return (
     <>
-      <HomeHeader state={state} feedCount={feed.length} onFrame={p.onFrame} onAsk={() => p.onOpenHelper('abel')} onUsers={p.onOpenUsers} onBell={() => setFeedAll(true)} />
+      <HomeHeader state={state} feedCount={feed.length + (p.extraCount || 0)} onFrame={p.onFrame} onAsk={() => p.onOpenHelper('abel')} onUsers={p.onOpenUsers} onBell={() => setFeedAll(true)} />
       <div className="nbody">
         {/* The existing Nordea app: shown so Abel sits in a familiar place. Tapping says so. */}
         <div className="ncard first">
@@ -135,6 +138,8 @@ export const HomePage: React.FC<Props> = (p) => {
             </div>
           )}
         </div>
+
+        {p.extra}
 
         {feed.length > 0 && (
           <>

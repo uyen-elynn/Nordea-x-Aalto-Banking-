@@ -10,6 +10,7 @@ import { CabinetEntry, UndoRecord } from './src/types.js';
 import { failClosedRoutes } from './src/server/failClosedRoutes.js';
 import { customerIdRejection } from './src/server/customerId.js';
 import { registerV14Routes } from './src/server/routes.js';
+import { registerAdviserFlowRoutes } from './src/server/adviserFlow.js';
 import { registerDevMonitor } from './src/server/devMonitor.js';
 import { registerArchRoutes } from './src/server/arch/routes.js';
 import { startFeedWatcher } from './src/server/nordeaFeed.js';
@@ -328,6 +329,9 @@ registerDevMonitor(app);
 
 // Three-database architecture (User DB / Context Memory DB / Nordea DB, one agent each): /arch.html
 registerArchRoutes(app);
+
+// Information flow to Nordea's agent and the adviser, and updates back to the customer: /api/flow/*
+registerAdviserFlowRoutes(app);
 
 // Vite Middleware Mounting (Development) or Static File Serving (Production)
 async function startServer() {

@@ -5,6 +5,8 @@ import { Icon } from '../ui/icons.js';
 import { nfi, eur, monthLong, monthShort, n0, dayMonth } from '../ui/format.js';
 import { DetailHead, NRow, Band, Toggle, RoundActions, BAND_BG } from './Nordea.js';
 import { HistoryCard } from './HomePage.js';
+import { ShareBlock, SharePill, isSharedEntry } from './FlowParts.js';
+import type { FlowState } from '../services/flowApi.js';
 
 // ---------------- What Abel knows ----------------
 const DRAWERS: { name: string; has: (e: CabinetEntry) => boolean; icon: string }[] = [
@@ -29,6 +31,11 @@ interface KnowsProps {
   /** An out-of-date goal is still a plan. */
   onKeep: (e: CabinetEntry) => void;
   onDeleteDoc: (id: string) => void;
+  /** Information flow: sharing with Nordea per item, updates waiting from the Nordea side. */
+  flow?: FlowState | null;
+  flowTop?: React.ReactNode;
+  onFlow?: () => void;
+  onShare?: (e: CabinetEntry, shared: boolean) => void;
 }
 
 // ---------------- History of one entry ----------------
@@ -84,7 +91,7 @@ function seenLine(e: CabinetEntry): string {
   return '';
 }
 
-const ItemRow: React.FC<{ e: CabinetEntry; open: boolean; onMenu: () => void; whyOpen: boolean; onWhy: () => void } & Pick<KnowsProps, 'onUpdate' | 'onArchive'>> = ({ e, open, onMenu, whyOpen, onWhy, onUpdate, onArchive }) => {
+const ItemRow: React.FC<{ e: CabinetEntry; open: boolean; onMenu: () => void; whyOpen: boolean; onWhy: () => void } & Pick<KnowsProps, 'onUpdate' | 'onArchive' | 'flow' | 'onShare'>> = ({ e, open, onMenu, whyOpen, onWhy, onUpdate, onArchive, flow, onShare }) => {
   const [hist, setHist] = useState(false);
   const c = e.type === 'blind_spot' ? 'grey' : e.source === 'nordea' ? 'bank' : 'you';
   const meta =
@@ -98,6 +105,7 @@ const ItemRow: React.FC<{ e: CabinetEntry; open: boolean; onMenu: () => void; wh
           {e.detail && <p className={open ? '' : 'clamp1'}>{e.detail}</p>}
           {(meta || seenLine(e)) && <span className={`meta${seenLine(e).startsWith('Not used') ? ' warn' : ''}`}>{[meta, seenLine(e)].filter(Boolean).join(' · ')}</span>}
         </div>
+        {onShare && e.status === 'active' && e.type !== 'blind_spot' && !(e.source === 'nordea' && !e.reviewed) && <SharePill shared={isSharedEntry(e)} />}
         <button className="more" onClick={onMenu} aria-expanded={open} aria-label={`Options for ${e.title}`}>{open ? '×' : '⋯'}</button>
       </div>
       {open && whyOpen && e.why && <p className="why">{e.why}</p>}
@@ -129,6 +137,7 @@ const ItemRow: React.FC<{ e: CabinetEntry; open: boolean; onMenu: () => void; wh
                   )}
                 </div>
               )}
+              {onShare && e.type !== 'blind_spot' && !(e.source === 'nordea' && !e.reviewed) && <ShareBlock e={e} flow={flow || null} onShare={onShare} />}
             </>
           )}
           {hist && <HistoryList userId={e.userId} entryId={e.id} />}
@@ -235,9 +244,11 @@ export const KnowsPage: React.FC<KnowsProps> = (p) => {
           { icon: 'plus', label: 'Add a goal', onClick: p.onAddGoal },
           { icon: 'spark', label: 'Tell Abel', onClick: p.onTellAbel },
           { icon: 'file', label: 'Import a chat', onClick: p.onImport },
+          ...(p.onFlow ? [{ icon: 'arrow', label: 'How it flows', onClick: p.onFlow }] : []),
         ]} />
       </header>
       <div className="nbody">
+        {p.flowTop}
         {waiting.length > 0 && (
           <>
             <Band left="Waiting for you" right={<span className="band-note">Not used until you confirm</span>} />
@@ -272,7 +283,7 @@ export const KnowsPage: React.FC<KnowsProps> = (p) => {
                     <span className="n-sub">{n0(g.saved)} of {eur(g.target)} · {monthShort(g.targetDate.slice(0, 7))}</span>
                     <span className="gbar"><i style={{ width: `${g.percentSaved}%` }} /></span>
                   </span>
-                  <span className="n-r"><span className={`npill ${g.onTrack ? 'up' : 'down'}`}>{g.onTrack ? 'On track' : `${eur(g.shortBy)} short`}</span></span>
+                  <span className="n-r"><span className={`npill ${g.onTrack ? 'up' : 'down'}`}>{g.onTrack ? 'On track' : `${eur(g.shortBy)} short`}</span>{p.onShare && (() => { const ge = state.entries.find((x) => x.id === g.goalId); return ge ? <SharePill shared={isSharedEntry(ge)} /> : null; })()}</span>
                   <span className="nchev" aria-hidden="true"><Icon name="chev" /></span>
                 </button>
                 {goalOpen === g.goalId && (
@@ -289,6 +300,7 @@ export const KnowsPage: React.FC<KnowsProps> = (p) => {
                       <button className="btn small quiet" aria-expanded={goalHist === g.goalId} onClick={() => setGoalHist(goalHist === g.goalId ? null : g.goalId)}>{goalHist === g.goalId ? 'Hide history' : 'History'}</button>
                     </div>
                     {goalHist === g.goalId && <HistoryList userId={state.user.id} entryId={g.goalId} />}
+                    {p.onShare && (() => { const ge = state.entries.find((x) => x.id === g.goalId); return ge ? <ShareBlock e={ge} flow={p.flow || null} onShare={p.onShare} /> : null; })()}
                   </div>
                 )}
               </React.Fragment>
@@ -332,7 +344,7 @@ export const KnowsPage: React.FC<KnowsProps> = (p) => {
                   </div>
                   <div className="list">
                     {items.map((e) => (
-                      <ItemRow key={e.id} e={e} open={menu === e.id} onMenu={() => { setMenu(menu === e.id ? null : e.id); setWhy(null); }} whyOpen={why === e.id} onWhy={() => setWhy(why === e.id ? null : e.id)} onUpdate={p.onUpdate} onArchive={p.onArchive} />
+                      <ItemRow key={e.id} e={e} open={menu === e.id} onMenu={() => { setMenu(menu === e.id ? null : e.id); setWhy(null); }} whyOpen={why === e.id} onWhy={() => setWhy(why === e.id ? null : e.id)} onUpdate={p.onUpdate} onArchive={p.onArchive} flow={p.flow} onShare={p.onShare} />
                     ))}
                   </div>
                 </div>
@@ -549,7 +561,7 @@ export const RedeemSheet: React.FC<{ state: AppState; reward: Reward; onYes: () 
 };
 
 // ---------------- Contact ----------------
-export const ContactPage: React.FC<{ state: AppState; onHelper: (id: string) => void; onOpenConversation: (id: string) => void; onDeleteChat?: (id: string) => void; onDeleteAllChats?: () => void }> = ({ state, onHelper, onOpenConversation, onDeleteChat, onDeleteAllChats }) => {
+export const ContactPage: React.FC<{ state: AppState; onHelper: (id: string) => void; onOpenConversation: (id: string) => void; onDeleteChat?: (id: string) => void; onDeleteAllChats?: () => void; extra?: React.ReactNode }> = ({ state, onHelper, onOpenConversation, onDeleteChat, onDeleteAllChats, extra }) => {
   const [all, setAll] = useState(false);
   return (
     <>
@@ -560,6 +572,7 @@ export const ContactPage: React.FC<{ state: AppState; onHelper: (id: string) => 
           <NRow name={<><Icon name="person" /> Talk to a person</>} sub="A Nordea adviser" onClick={() => onHelper('person')} />
           <NRow name={<><Icon name="cal" /> Book an online meeting</>} sub="Pick a time" onClick={() => onHelper('person')} />
         </div>
+        {extra}
         <HistoryCard state={state} all={all} onToggle={() => setAll(!all)} onOpen={onOpenConversation} onDelete={onDeleteChat} onDeleteAll={onDeleteAllChats} />
       </div>
     </>

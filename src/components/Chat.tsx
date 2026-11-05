@@ -58,6 +58,9 @@ interface Props {
   userId: string;
   documents: DocInfo[];
   onDeleteDoc: (id: string) => void;
+  /** Items shared with Nordea (information flow), and how to change that from a saved note. */
+  sharedIds?: string[];
+  onShare?: (entryId: string, shared: boolean) => void;
 }
 
 /** "15 000 €" never splits over two lines in a bubble. */
@@ -439,7 +442,10 @@ export const Chat: React.FC<Props> = (p) => {
           <>
             <span className="pre">{t}</span>
             {last && (m.notes || []).map((nt, k) => (
-              <span className="noted" key={k}>{nt.text} {nt.undoToken && <button className="btn link" onClick={() => p.onUndo(nt.undoToken!)}>Undo</button>}</span>
+              <span className="noted" key={k}>{nt.text} {nt.undoToken && <button className="btn link" onClick={() => p.onUndo(nt.undoToken!)}>Undo</button>}
+                {nt.entryId && p.onShare && p.entries.some((e) => e.id === nt.entryId) && (p.sharedIds || []).includes(nt.entryId)
+                  ? <>· Shared with Nordea <button className="btn link" onClick={() => p.onShare!(nt.entryId!, false)}>Keep it only mine</button></>
+                  : nt.entryId && p.onShare && p.entries.some((e) => e.id === nt.entryId) ? <>· Only you <button className="btn link" onClick={() => p.onShare!(nt.entryId!, true)}>Share with Nordea</button></> : null}</span>
             ))}
             {last && inlineInfo.map((x) => <span className="noted" key={x.ci}>{x.node}</span>)}
           </>
